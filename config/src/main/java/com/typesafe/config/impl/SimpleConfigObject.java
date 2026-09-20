@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -192,6 +193,47 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
             return this;
         else
             return newCopy(resolveStatus(), origin(), true /* ignoresFallbacks */);
+    }
+
+    boolean hasUnresolvedFallbackBarrier() {
+        // Substitutions can share subtrees, so visit each object identity once.
+        return hasUnresolvedFallbackBarrier(Collections.newSetFromMap(
+                new IdentityHashMap<SimpleConfigObject, Boolean>()));
+    }
+
+    private boolean hasUnresolvedFallbackBarrier(Set<SimpleConfigObject> visited) {
+        if (!visited.add(this))
+            return false;
+        for (AbstractConfigValue child : value.values()) {
+            if (child instanceof SimpleConfigObject) {
+                if (((SimpleConfigObject) child).hasUnresolvedFallbackBarrier(visited))
+                    return true;
+            } else if (child instanceof Unmergeable && child.ignoresFallbacks()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Substitution copies the final value, not the source key's merge history.
+    SimpleConfigObject withoutFallbackBarriers() {
+        return withoutFallbackBarriers(new IdentityHashMap<SimpleConfigObject, SimpleConfigObject>());
+    }
+
+    private SimpleConfigObject withoutFallbackBarriers(final Map<SimpleConfigObject, SimpleConfigObject> memo) {
+        SimpleConfigObject cached = memo.get(this);
+        if (cached != null)
+            return cached;
+        SimpleConfigObject copy = modify(new NoExceptionsModifier() {
+            @Override
+            AbstractConfigValue modifyChild(String key, AbstractConfigValue child) {
+                return child instanceof SimpleConfigObject
+                        ? ((SimpleConfigObject) child).withoutFallbackBarriers(memo) : child;
+            }
+        });
+        SimpleConfigObject result = copy.ignoresFallbacks ? copy.newCopy(copy.resolveStatus(), copy.origin(), false) : copy;
+        memo.put(this, result);
+        return result;
     }
 
     @Override

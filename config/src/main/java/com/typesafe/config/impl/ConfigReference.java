@@ -110,6 +110,14 @@ final class ConfigReference extends AbstractConfigValue implements Unmergeable {
             else
                 throw new ConfigException.UnresolvedSubstitution(origin(), expr.toString());
         } else {
+            if (v instanceof SimpleConfigObject) {
+                // Do not flatten an unresolved source history into the receiving
+                // object. A later resolve must cross this reference boundary again.
+                if (newContext.options().getAllowUnresolved() && !newContext.isRestrictedToChild()
+                        && ((SimpleConfigObject) v).hasUnresolvedFallbackBarrier())
+                    return ResolveResult.make(newContext.removeCycleMarker(this), this);
+                v = ((SimpleConfigObject) v).withoutFallbackBarriers();
+            }
             return ResolveResult.make(newContext.removeCycleMarker(this), v);
         }
     }
