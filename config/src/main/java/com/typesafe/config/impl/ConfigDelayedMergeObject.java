@@ -244,35 +244,18 @@ final class ConfigDelayedMergeObject extends AbstractConfigObject implements Unm
 
     @Override
     protected AbstractConfigValue attemptPeekWithPartialResolve(String key) {
-        // a partial resolve of a ConfigDelayedMergeObject always results in a
-        // SimpleConfigObject because all the substitutions in the stack get
-        // resolved in order to look up the partial.
-        // So we know here that we have not been resolved at all even
-        // partially.
-        // Given that, all this code is probably gratuitous, since the app code
-        // is likely broken. But in general we only throw NotResolved if you try
-        // to touch the exact key that isn't resolved, so this is in that
-        // spirit.
-
-        // we'll be able to return a key if we have a value that ignores
-        // fallbacks, prior to any unmergeable values.
+        // Restricted resolution can leave unrelated siblings unresolved. Keep
+        // the selected child from higher-priority object layers while scanning
+        // for a fallback or a non-object barrier; neither can erase that child.
+        AbstractConfigValue merged = null;
         for (AbstractConfigValue layer : stack) {
             if (layer instanceof AbstractConfigObject) {
                 AbstractConfigObject objectLayer = (AbstractConfigObject) layer;
                 AbstractConfigValue v = objectLayer.attemptPeekWithPartialResolve(key);
                 if (v != null) {
-                    if (v.ignoresFallbacks()) {
-                        // we know we won't need to merge anything into this
-                        // value
-                        return v;
-                    } else {
-                        // we can't return this value because we know there are
-                        // unmergeable values later in the stack that may
-                        // contain values that need to be merged with this
-                        // value. we'll throw the exception when we get to those
-                        // unmergeable values, so continue here.
-                        continue;
-                    }
+                    merged = merged == null ? v : merged.withFallback(v);
+                    if (merged.ignoresFallbacks())
+                        return merged;
                 } else if (layer instanceof Unmergeable) {
                     // an unmergeable object (which would be another
                     // ConfigDelayedMergeObject) can't know that a key is
@@ -300,20 +283,19 @@ final class ConfigDelayedMergeObject extends AbstractConfigObject implements Unm
                 // an unresolved object... i.e. it's an array
                 if (!(layer instanceof ConfigList))
                     throw new ConfigException.BugOrBroken("Expecting a list here, not " + layer);
-                // all later objects will be hidden so we can say we won't find
-                // the key
-                return null;
+                // The barrier hides lower layers, not the child already found.
+                return merged;
             } else {
                 // non-object, but resolved, like an integer or something.
                 // has no children so the one we're after won't be in it.
                 // we would only have this in the stack in case something
                 // else "looks back" to it due to a cycle.
-                // anyway at this point we know we can't find the key anymore.
+                // No lower layer can contribute to a child already found.
                 if (!layer.ignoresFallbacks()) {
                     throw new ConfigException.BugOrBroken(
                             "resolved non-object should ignore fallbacks");
                 }
-                return null;
+                return merged;
             }
         }
         // If we get here, then we never found anything unresolved which means
