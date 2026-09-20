@@ -82,7 +82,8 @@ final class ConfigConcatenation extends AbstractConfigValue implements Unmergeab
     }
 
     private static boolean isIgnoredWhitespace(AbstractConfigValue value) {
-        return (value instanceof ConfigString) && !((ConfigString)value).wasQuoted();
+        return (value instanceof ConfigString) && !((ConfigString)value).wasQuoted()
+                && ConfigImplUtil.unicodeTrim(((ConfigString) value).unwrapped()).isEmpty();
     }
 
     /**
