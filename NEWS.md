@@ -1,3 +1,7 @@
+# Unreleased
+
+- fix: a substituted object no longer carries a `null` from the source key's history, so `a = ${r}` merges with earlier values of `a` ([#864](https://github.com/lightbend/config/pull/864)) thanks to [@lejmr](https://github.com/lejmr). Behaviour change: after `r = null, r = {x = 1}, a = ${r}`, `resolve().withFallback(a = {helper = 0})` now gives `a = {helper = 0, x = 1}` instead of `a = {x = 1}`.
+
 # 1.4.9: June 3, 2026
 
 - fix: origin line numbers after newline separators ([#850](https://github.com/lightbend/config/pull/850)) thanks to [@mattheworford](https://github.com/mattheworford)

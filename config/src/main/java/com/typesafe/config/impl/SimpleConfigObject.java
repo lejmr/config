@@ -32,6 +32,8 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
     final private Map<String, AbstractConfigValue> value;
     final private boolean resolved;
     final private boolean ignoresFallbacks;
+    // true if this object or any value below it ignores fallbacks
+    final private boolean containsIgnoredFallback;
 
     SimpleConfigObject(ConfigOrigin origin,
             Map<String, AbstractConfigValue> value, ResolveStatus status,
@@ -43,6 +45,7 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
         this.value = value;
         this.resolved = status == ResolveStatus.RESOLVED;
         this.ignoresFallbacks = ignoresFallbacks;
+        this.containsIgnoredFallback = ignoresFallbacks || containsIgnoredFallback(value.values());
 
         // Kind of an expensive debug check. Comment out?
         if (status != ResolveStatus.fromValues(value.values()))
@@ -52,6 +55,16 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
     SimpleConfigObject(ConfigOrigin origin,
             Map<String, AbstractConfigValue> value) {
         this(origin, value, ResolveStatus.fromValues(value.values()), false /* ignoresFallbacks */);
+    }
+
+    private static boolean containsIgnoredFallback(Collection<AbstractConfigValue> values) {
+        for (AbstractConfigValue v : values) {
+            // scalars always ignore fallbacks; only objects and pending merges matter here
+            if (v instanceof SimpleConfigObject ? ((SimpleConfigObject) v).containsIgnoredFallback
+                    : v instanceof Unmergeable && v.ignoresFallbacks())
+                return true;
+        }
+        return false;
     }
 
     @Override
@@ -195,18 +208,26 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
             return newCopy(resolveStatus(), origin(), true /* ignoresFallbacks */);
     }
 
-    boolean hasUnresolvedFallbackBarrier() {
+    // An object "ignores fallbacks" when a null or a non-object came before it
+    // in its key's merge history. That is a merge instruction for that key only;
+    // a substitution copies the final value without it (see ConfigReference).
+
+    // True if some value in this subtree still has to be resolved and will
+    // ignore fallbacks, so the flag cannot be cleared yet.
+    boolean hasUnresolvedIgnoredFallback() {
+        if (resolved || !containsIgnoredFallback)
+            return false;
         // Substitutions can share subtrees, so visit each object identity once.
-        return hasUnresolvedFallbackBarrier(Collections.newSetFromMap(
+        return hasUnresolvedIgnoredFallback(Collections.newSetFromMap(
                 new IdentityHashMap<SimpleConfigObject, Boolean>()));
     }
 
-    private boolean hasUnresolvedFallbackBarrier(Set<SimpleConfigObject> visited) {
-        if (!visited.add(this))
+    private boolean hasUnresolvedIgnoredFallback(Set<SimpleConfigObject> visited) {
+        if (resolved || !containsIgnoredFallback || !visited.add(this))
             return false;
         for (AbstractConfigValue child : value.values()) {
             if (child instanceof SimpleConfigObject) {
-                if (((SimpleConfigObject) child).hasUnresolvedFallbackBarrier(visited))
+                if (((SimpleConfigObject) child).hasUnresolvedIgnoredFallback(visited))
                     return true;
             } else if (child instanceof Unmergeable && child.ignoresFallbacks()) {
                 return true;
@@ -215,12 +236,17 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
         return false;
     }
 
-    // Substitution copies the final value, not the source key's merge history.
-    SimpleConfigObject withoutFallbackBarriers() {
-        return withoutFallbackBarriers(new IdentityHashMap<SimpleConfigObject, SimpleConfigObject>());
+    // This subtree with every object's ignored fallbacks cleared.
+    SimpleConfigObject withFallbacksNotIgnored() {
+        if (!containsIgnoredFallback)
+            return this;
+        // Shared subtrees stay shared and are copied once.
+        return withFallbacksNotIgnored(new IdentityHashMap<SimpleConfigObject, SimpleConfigObject>());
     }
 
-    private SimpleConfigObject withoutFallbackBarriers(final Map<SimpleConfigObject, SimpleConfigObject> memo) {
+    private SimpleConfigObject withFallbacksNotIgnored(final Map<SimpleConfigObject, SimpleConfigObject> memo) {
+        if (!containsIgnoredFallback)
+            return this;
         SimpleConfigObject cached = memo.get(this);
         if (cached != null)
             return cached;
@@ -228,10 +254,11 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
             @Override
             AbstractConfigValue modifyChild(String key, AbstractConfigValue child) {
                 return child instanceof SimpleConfigObject
-                        ? ((SimpleConfigObject) child).withoutFallbackBarriers(memo) : child;
+                        ? ((SimpleConfigObject) child).withFallbacksNotIgnored(memo) : child;
             }
         });
-        SimpleConfigObject result = copy.ignoresFallbacks ? copy.newCopy(copy.resolveStatus(), copy.origin(), false) : copy;
+        SimpleConfigObject result = copy.ignoresFallbacks()
+                ? copy.newCopy(copy.resolveStatus(), copy.origin(), false) : copy;
         memo.put(this, result);
         return result;
     }

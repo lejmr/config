@@ -110,16 +110,39 @@ final class ConfigReference extends AbstractConfigValue implements Unmergeable {
             else
                 throw new ConfigException.UnresolvedSubstitution(origin(), expr.toString());
         } else {
-            if (v instanceof SimpleConfigObject) {
-                // Do not flatten an unresolved source history into the receiving
-                // object. A later resolve must cross this reference boundary again.
-                if (newContext.options().getAllowUnresolved() && !newContext.isRestrictedToChild()
-                        && ((SimpleConfigObject) v).hasUnresolvedFallbackBarrier())
-                    return ResolveResult.make(newContext.removeCycleMarker(this), this);
-                v = ((SimpleConfigObject) v).withoutFallbackBarriers();
-            }
+            // The source key's ignored fallbacks are a merge instruction for that
+            // key, not part of the value, so the substituted copy drops them.
+            // A merge that ignores fallbacks and is still pending (partial
+            // resolve) cannot drop them without losing the null the source key
+            // needs, so keep this reference and drop them on a later resolve.
+            if (newContext.options().getAllowUnresolved() && v instanceof Unmergeable && v.ignoresFallbacks())
+                return ResolveResult.make(newContext.removeCycleMarker(this), this);
+            if (v instanceof SimpleConfigObject)
+                v = deferPendingIgnoredFallbacks((SimpleConfigObject) v, expr.path()).withFallbacksNotIgnored();
             return ResolveResult.make(newContext.removeCycleMarker(this), v);
         }
+    }
+
+    // Pending children that ignore fallbacks are left by a partial resolve or
+    // by a restricted one (a lookup resolves only the path it needs). Merged
+    // into the receiver as they are, they would drop the receiver's own values
+    // for that key, and a lookup would memoize that. Replace each with a
+    // reference to the same place in the source instead; it resolves later
+    // like any other reference and then drops the ignored fallbacks.
+    private SimpleConfigObject deferPendingIgnoredFallbacks(SimpleConfigObject obj, Path path) {
+        if (!obj.hasUnresolvedIgnoredFallback())
+            return obj;
+        SimpleConfigObject result = obj;
+        for (String key : obj.keySet()) {
+            AbstractConfigValue child = obj.get(key);
+            Path childPath = Path.newKey(key).prepend(path);
+            if (child instanceof Unmergeable && child.ignoresFallbacks())
+                result = result.withValue(key, new ConfigReference(child.origin(), expr.changePath(childPath),
+                        prefixLength));
+            else if (child instanceof SimpleConfigObject)
+                result = result.withValue(key, deferPendingIgnoredFallbacks((SimpleConfigObject) child, childPath));
+        }
+        return result;
     }
 
     @Override
