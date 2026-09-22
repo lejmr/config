@@ -78,6 +78,88 @@ class ConcatenationTest extends TestUtils {
                 e.getMessage.contains("[1,2]"))
     }
 
+    private def assertNoStringConcatWithCollection(conf: String, collection: String, text: String) {
+        val e = intercept[ConfigException.WrongType] {
+            parseConfig(conf).resolve()
+        }
+        assertTrue("wrong exception: " + e.getMessage,
+            e.getMessage.contains("Cannot concatenate") &&
+                e.getMessage.contains(collection) &&
+                e.getMessage.contains(text))
+    }
+
+    @Test
+    def noStringDirectlyAfterArray() {
+        assertNoStringConcatWithCollection(""" a : [1]suffix """, "[1]", "suffix")
+    }
+
+    @Test
+    def noStringAfterArray() {
+        assertNoStringConcatWithCollection(""" a : [1] suffix """, "[1]", "suffix")
+    }
+
+    @Test
+    def noStringAfterObject() {
+        assertNoStringConcatWithCollection(""" a : { b : 1 }x """, """{"b":1}""", "x")
+    }
+
+    @Test
+    def noStringBetweenArrays() {
+        assertNoStringConcatWithCollection(""" list = [0, 1] | [2,3] """, "[0,1]", "|")
+    }
+
+    @Test
+    def noWordsBetweenArrays() {
+        assertNoStringConcatWithCollection(""" list = [0]  bar baz [1,2,3] """, "[0]", "bar")
+    }
+
+    @Test
+    def noWordsAndSymbolsBetweenArrays() {
+        assertNoStringConcatWithCollection(""" list = [0] abc [bar, baz] ||| xyz [1,2,3] """, "[0]", "abc")
+    }
+
+    @Test
+    def noStringSubstitutionAfterArray() {
+        assertNoStringConcatWithCollection(""" x = foo, a : [1] ${x} """, "[1]", "foo")
+    }
+
+    @Test
+    def whitespaceBetweenArrays() {
+        val conf = parseConfig("a : [1] \t [2]").resolve()
+        assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def nonBreakingSpaceBetweenArrays() {
+        val conf = parseConfig("a : [1] [2]").resolve()
+        assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def byteOrderMarkBetweenArrays() {
+        val conf = parseConfig("a : [1]﻿[2]").resolve()
+        assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def missingOptionalSubstitutionAfterArray() {
+        val conf = parseConfig(""" a : [1] ${?absent} """).resolve()
+        assertEquals(Seq(1), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def commentAfterArray() {
+        val conf = parseConfig("a : [1] # comment").resolve()
+        assertEquals(Seq(1), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def whitespaceBetweenObjects() {
+        val conf = parseConfig(""" a : { b : 1 } { c : 2 } """).resolve()
+        assertEquals(1, conf.getInt("a.b"))
+        assertEquals(2, conf.getInt("a.c"))
+    }
+
     @Test
     def noObjectsSubstitutedInStringConcat() {
         val e = intercept[ConfigException.WrongType] {
