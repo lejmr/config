@@ -110,6 +110,11 @@ final class ConfigReference extends AbstractConfigValue implements Unmergeable {
         }
     }
 
+    @Override
+    ResolveStatus resolveStatus() {
+        return ResolveStatus.UNRESOLVED;
+    }
+
     // Resolves the value a lookup found, against the object it was found in;
     // if the lookup found nothing, asks the resolver instead.
     private ResolveResult<? extends AbstractConfigValue> resolveLookup(ResolveContext context, ResolveSource source,
@@ -142,11 +147,6 @@ final class ConfigReference extends AbstractConfigValue implements Unmergeable {
         for (ResolveSource.Node<Container> n = resultWithPath.pathFromRoot; n != null; n = n.tail())
             depth += 1;
         return depth == expr.path().length();
-    }
-
-    @Override
-    ResolveStatus resolveStatus() {
-        return ResolveStatus.UNRESOLVED;
     }
 
     // when you graft a substitution into another object,
