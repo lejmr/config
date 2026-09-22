@@ -241,12 +241,6 @@ final class ConfigDocumentParser {
             AbstractConfigNodeValue v = null;
             int startingEqualsCount = equalsCount;
 
-            // Numeric tokens also occur in paths, where dots separate keys.
-            // Reject a missing integer part only when interpreting a value.
-            if (Tokens.isValueWithType(t, ConfigValueType.NUMBER)
-                    && t.tokenText() != null && t.tokenText().startsWith("-."))
-                throw parseError("A number must have an integer part before the decimal point");
-
             if (Tokens.isValue(t) || Tokens.isUnquotedText(t) || Tokens.isSubstitution(t)) {
                 v = new ConfigNodeSimpleValue(t);
             } else if (t == Tokens.OPEN_CURLY) {
