@@ -1383,6 +1383,13 @@ class ConfigSubstitutionTest extends TestUtils {
     // copies the final value, so the receiving key still merges with its own
     // earlier values.
 
+    // A root key that iterates before "a" in the root HashMap (String.hashCode is
+    // stable). With ${a...} under this key, the lookup resolves "a" restricted to
+    // the looked-up child before "a" is resolved in full.
+    private val observerBeforeA = "o24bbd"
+    // A root key that iterates after "a", so "a" is resolved in full first.
+    private val observerAfterA = "zzz"
+
     private def resolveNoSystem(s: String, options: ConfigResolveOptions = ConfigResolveOptions.noSystem()) =
         ConfigFactory.parseString(s).resolve(options)
 
@@ -1424,13 +1431,11 @@ class ConfigSubstitutionTest extends TestUtils {
 
     @Test
     def lookupResolvedBeforeReceiverSeesMergedValue() {
-        // "o24bbd" iterates before "a" in the root HashMap (String.hashCode is
-        // stable), so ${a.nested} resolves "a" restricted to "nested" before "a"
-        // is resolved in full. The restricted resolve must not treat the source
-        // key's null in v.nested as a's own and drop {helper=0}.
+        // The restricted resolve of "a" must not treat the source key's null in
+        // v.nested as a's own and drop {helper=0}.
         val source = "v={nested=null,nested=${payload},sibling=${payload}}\npayload={x=1}\n" +
             "a={nested={helper=0}}\na=${v}\n"
-        for (observer <- Seq("o24bbd", "zzz")) {
+        for (observer <- Seq(observerBeforeA, observerAfterA)) {
             val resolved = resolveNoSystem(source + observer + "=${a.nested}")
             assertEquals(parseConfig("{helper=0, x=1}").root, resolved.getObject("a.nested"))
             assertEquals(parseConfig("{helper=0, x=1}").root, resolved.getObject(observer))
@@ -1452,9 +1457,9 @@ class ConfigSubstitutionTest extends TestUtils {
         val lib = parseConfig("v={nested=null,nested=${p},back=${app}}\np={x=1}\na={nested={h=0}}\na=${v}")
         val app = parseConfig("app=${a.nested}").resolveWith(lib, ConfigResolveOptions.noSystem())
         assertEquals(parseConfig("{h=0, x=1}").root, app.getObject("app"))
-        // v.back -> o24bbd -> a.nested is not a cycle as long as only v.nested is needed for a.nested
-        val resolved = resolveNoSystem("v={nested=null,nested=${p},back=${o24bbd}}\np={x=1}\n" +
-            "a={nested={h=0}}\na=${v}\no24bbd=${a.nested}")
+        // v.back -> observer -> a.nested is not a cycle as long as only v.nested is needed for a.nested
+        val resolved = resolveNoSystem("v={nested=null,nested=${p},back=${" + observerBeforeA + "}}\np={x=1}\n" +
+            "a={nested={h=0}}\na=${v}\n" + observerBeforeA + "=${a.nested}")
         assertEquals(parseConfig("{h=0, x=1}").root, resolved.getObject("v.back"))
     }
 
@@ -1462,15 +1467,15 @@ class ConfigSubstitutionTest extends TestUtils {
     def lookupThroughAnotherReceiverIsNotACycle() {
         // v.nested points at b.q, and b=${a} goes back through a; this is not a cycle
         val resolved = resolveNoSystem("v={nested=null,nested=${b.q}}\na={nested={h=0},q={x=1}}\na=${v}\n" +
-            "b=${a}\no24bbd=${b.nested}")
-        assertEquals(parseConfig("{h=0, x=1}").root, resolved.getObject("o24bbd"))
+            "b=${a}\n" + observerBeforeA + "=${b.nested}")
+        assertEquals(parseConfig("{h=0, x=1}").root, resolved.getObject(observerBeforeA))
     }
 
     @Test
     def lookupOfReceiverSiblingSeesMergedValue() {
         // a lookup of a.s resolves a restricted to s; the pending nested must not drop h=0
         val source = "v={nested=null,nested=${p}}\np={x=1}\na={nested={h=0},s=${a.nested}}\na=${v}\n"
-        for (observer <- Seq("o24bbd", "zzz")) {
+        for (observer <- Seq(observerBeforeA, observerAfterA)) {
             val resolved = resolveNoSystem(source + observer + "=${a.s}")
             assertEquals(parseConfig("{h=0, x=1}").root, resolved.getObject("a.s"))
             assertEquals(parseConfig("{h=0, x=1}").root, resolved.getObject(observer))
@@ -1479,11 +1484,12 @@ class ConfigSubstitutionTest extends TestUtils {
 
     @Test
     def partialResolveKeepsReceiverFallbacksForNestedNull() {
-        val partial = partialResolve("v={nested=null,nested=${pending}}\na={nested={helper=0}}\na=${v}\no24bbd=${a.nested}")
+        val partial = partialResolve("v={nested=null,nested=${pending}}\na={nested={helper=0}}\na=${v}\n" +
+            observerBeforeA + "=${a.nested}")
             .resolve(ConfigResolveOptions.noSystem().setAllowUnresolved(true))
         val complete = partial.withFallback(parseConfig("pending={x=1}")).resolve(ConfigResolveOptions.noSystem())
         assertEquals(parseConfig("{helper=0, x=1}").root, complete.getObject("a.nested"))
-        assertEquals(parseConfig("{helper=0, x=1}").root, complete.getObject("o24bbd"))
+        assertEquals(parseConfig("{helper=0, x=1}").root, complete.getObject(observerBeforeA))
     }
 
     @Test
