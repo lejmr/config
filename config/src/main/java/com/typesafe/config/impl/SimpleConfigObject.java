@@ -48,10 +48,18 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
         this.value = value;
         this.resolved = status == ResolveStatus.RESOLVED;
         this.ignoresFallbacks = ignoresFallbacks;
-        this.hasIgnoredFallback = ignoresFallbacks || anyHasIgnoredFallback(value.values());
+        boolean childUnresolved = false;
+        boolean carries = ignoresFallbacks;
+        for (AbstractConfigValue v : value.values()) {
+            if (v.resolveStatus() == ResolveStatus.UNRESOLVED)
+                childUnresolved = true;
+            if (!carries && carriesIgnoredFallback(v))
+                carries = true;
+        }
+        this.hasIgnoredFallback = carries;
 
         // Kind of an expensive debug check. Comment out?
-        if (status != ResolveStatus.fromValues(value.values()))
+        if (status != ResolveStatus.fromBoolean(!childUnresolved))
             throw new ConfigException.BugOrBroken("Wrong resolved status on " + this);
     }
 
@@ -60,16 +68,20 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
         this(origin, value, ResolveStatus.fromValues(value.values()), false /* ignoresFallbacks */);
     }
 
-    // Scalars always ignore fallbacks, so only objects and pending merges carry the flag.
-    private static boolean hasIgnoredFallback(AbstractConfigValue v) {
+    // True if v or a value inside it ignores fallbacks. Scalars always ignore
+    // fallbacks, so only objects and pending values count. A pending merge
+    // counts if it ignores fallbacks itself or if a value in its stack does,
+    // e.g. { nested = null, nested = ${p} } below an object from ${q}.
+    static boolean carriesIgnoredFallback(AbstractConfigValue v) {
         if (v instanceof SimpleConfigObject)
             return ((SimpleConfigObject) v).hasIgnoredFallback;
-        return v instanceof Unmergeable && v.ignoresFallbacks();
-    }
-
-    private static boolean anyHasIgnoredFallback(Collection<AbstractConfigValue> values) {
-        for (AbstractConfigValue v : values) {
-            if (hasIgnoredFallback(v))
+        if (!(v instanceof Unmergeable))
+            return false;
+        if (v.ignoresFallbacks())
+            return true;
+        // references and concatenations list only themselves
+        for (AbstractConfigValue unmerged : ((Unmergeable) v).unmergedValues()) {
+            if (unmerged != v && carriesIgnoredFallback(unmerged))
                 return true;
         }
         return false;
@@ -216,33 +228,9 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
             return newCopy(resolveStatus(), origin(), true /* ignoresFallbacks */);
     }
 
-    // True if some value in this subtree still has to be resolved and will
-    // ignore fallbacks, so the flag cannot be cleared yet.
-    boolean hasUnresolvedIgnoredFallback() {
-        if (resolved || !hasIgnoredFallback)
-            return false;
-        // Substitutions can share subtrees, so visit each object identity once.
-        return hasUnresolvedIgnoredFallback(Collections.newSetFromMap(
-                new IdentityHashMap<SimpleConfigObject, Boolean>()));
-    }
-
-    private boolean hasUnresolvedIgnoredFallback(Set<SimpleConfigObject> visited) {
-        if (resolved || !hasIgnoredFallback || !visited.add(this))
-            return false;
-        for (AbstractConfigValue child : value.values()) {
-            if (!hasIgnoredFallback(child))
-                continue;
-            // anything but an object here is a pending merge
-            if (!(child instanceof SimpleConfigObject)
-                    || ((SimpleConfigObject) child).hasUnresolvedIgnoredFallback(visited))
-                return true;
-        }
-        return false;
-    }
-
     // A restricted resolve (a lookup resolves only the path it needs) or a
-    // partial one can leave pending merges below this object that ignore
-    // fallbacks. Merged into the receiving key as they are, they would drop
+    // partial one can leave pending merges below this object that carry
+    // ignored fallbacks. Merged into the receiving key as they are, they would drop
     // the receiver's own values for that key, and a lookup would memoize that.
     // Replace each with a reference to the same path in the source instead;
     // it resolves later like any other reference, and the substituted value
@@ -259,7 +247,7 @@ final class SimpleConfigObject extends AbstractConfigObject implements Serializa
         return modify(new NoExceptionsModifier() {
             @Override
             AbstractConfigValue modifyChild(String key, AbstractConfigValue child) {
-                if (!hasIgnoredFallback(child))
+                if (!carriesIgnoredFallback(child))
                     return child;
                 Path childPath = Path.newKey(key).prepend(path);
                 if (child instanceof SimpleConfigObject)

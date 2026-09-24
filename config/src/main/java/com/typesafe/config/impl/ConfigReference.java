@@ -110,13 +110,14 @@ final class ConfigReference extends AbstractConfigValue implements Unmergeable {
             else
                 throw new ConfigException.UnresolvedSubstitution(origin(), expr.toString());
         } else {
+            // A pending merge that carries ignored fallbacks (partial resolve)
+            // cannot drop them without losing the null the source key needs, so
+            // keep this reference and substitute on a later resolve.
+            if (newContext.options().getAllowUnresolved() && v instanceof Unmergeable
+                    && SimpleConfigObject.carriesIgnoredFallback(v))
+                return ResolveResult.make(newContext.removeCycleMarker(this), this);
             // The source key's ignored fallbacks are a merge instruction for that
             // key, not part of the value, so the substituted copy drops them.
-            // A merge that ignores fallbacks and is still pending (partial
-            // resolve) cannot drop them without losing the null the source key
-            // needs, so keep this reference and drop them on a later resolve.
-            if (newContext.options().getAllowUnresolved() && v instanceof Unmergeable && v.ignoresFallbacks())
-                return ResolveResult.make(newContext.removeCycleMarker(this), this);
             if (v instanceof SimpleConfigObject)
                 v = ((SimpleConfigObject) v).deferPendingIgnoredFallbacks(this, expr.path()).withFallbacksNotIgnored();
             return ResolveResult.make(newContext.removeCycleMarker(this), v);
