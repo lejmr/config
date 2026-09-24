@@ -123,22 +123,39 @@ class ConcatenationTest extends TestUtils {
         assertNoStringConcatWithCollection(""" x = foo, a : [1] ${x} """, "[1]", "foo")
     }
 
+    // The tokenizer drops whitespace next to a literal [ ] or { }; whitespace
+    // between two substitutions is kept as an unquoted string, so these tests
+    // put it there to reach the concatenation.
+
     @Test
-    def whitespaceBetweenArrays() {
-        val conf = parseConfig("a : [1] \t [2]").resolve()
+    def whitespaceBetweenSubstitutedArrays() {
+        val conf = parseConfig("x = [1], y = [2], a : ${x} \t ${y}").resolve()
         assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
     }
 
     @Test
-    def nonBreakingSpaceBetweenArrays() {
-        val conf = parseConfig("a : [1] [2]").resolve()
+    def nonBreakingSpaceBetweenSubstitutedArrays() {
+        val conf = parseConfig("x = [1], y = [2], a : ${x}\u00A0${y}").resolve()
         assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
     }
 
     @Test
-    def byteOrderMarkBetweenArrays() {
-        val conf = parseConfig("a : [1]﻿[2]").resolve()
+    def byteOrderMarkBetweenSubstitutedArrays() {
+        val conf = parseConfig("x = [1], y = [2], a : ${x}\uFEFF${y}").resolve()
         assertEquals(Seq(1, 2), conf.getIntList("a").asScala)
+    }
+
+    @Test
+    def nonBreakingSpaceBetweenSubstitutedObjects() {
+        val conf = parseConfig("x = { b : 1 }, y = { c : 2 }, a : ${x}\u00A0${y}").resolve()
+        assertEquals(1, conf.getInt("a.b"))
+        assertEquals(2, conf.getInt("a.c"))
+    }
+
+    @Test
+    def zeroWidthSpaceBetweenSubstitutedArraysIsText() {
+        // U+200B is a format character, not whitespace in HOCON, so it is text
+        assertNoStringConcatWithCollection("x = [1], y = [2], a : ${x}\u200B${y}", "[1]", "\u200B")
     }
 
     @Test
@@ -151,13 +168,6 @@ class ConcatenationTest extends TestUtils {
     def commentAfterArray() {
         val conf = parseConfig("a : [1] # comment").resolve()
         assertEquals(Seq(1), conf.getIntList("a").asScala)
-    }
-
-    @Test
-    def whitespaceBetweenObjects() {
-        val conf = parseConfig(""" a : { b : 1 } { c : 2 } """).resolve()
-        assertEquals(1, conf.getInt("a.b"))
-        assertEquals(2, conf.getInt("a.c"))
     }
 
     @Test
